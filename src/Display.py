@@ -193,13 +193,14 @@ def _turn_geometry(yaw, pitch, face, angle):
 class _DisplaySolver(Solver):
     """Use solve's return value without the base constructor's extra search."""
 
-    def __init__(self, cancelled):
+    def __init__(self, cube, cancelled):
+        self.cube = cube
         self.cancelled = cancelled
 
-    def dfs(self, cube, depth, prev):
+    def dfs(self, cube, depth, limit, prev):
         if self.cancelled.is_set():
             raise InterruptedError("Solve cancelled")
-        return super().dfs(cube, depth, prev)
+        return super().dfs(cube, depth, limit, prev)
 
 
 class Display:
@@ -493,7 +494,7 @@ class Display:
     @staticmethod
     def _run_solver(snapshot, cancelled, results, max_depth):
         try:
-            result = _DisplaySolver(cancelled).solve(snapshot, max_depth)
+            result = _DisplaySolver(snapshot, cancelled).solve(snapshot, max_depth)
         except InterruptedError:
             return
         except Exception as error:

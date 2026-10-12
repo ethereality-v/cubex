@@ -13,10 +13,8 @@ if __name__ == "__main__":
     cube = Cube()
     cube.r()
     cube.u()
-    cube.r()
-    cube.f()
-    cube.d()
-    cube.lprime()
-    cube.uprime()
+    cube.fprime()
+    cube.d2()
+    cube.l()
     show_cube(cube)
     
