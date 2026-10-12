@@ -1,7 +1,8 @@
 """Launch the interactive cube display."""
 
-from Cube import Cube
-from Display import Display
+from cube import Cube
+from display import Display
+from solver import Solver
 
 
 def show_cube(cube):
@@ -10,4 +11,11 @@ def show_cube(cube):
 
 if __name__ == "__main__":
     cube = Cube()
-    show_cube(cube)
+    cube.r()
+    cube.u()
+    cube.r()
+    cube.f()
+    cube.uprime()
+    solver = Solver(cube)
+    print(solver)
+    

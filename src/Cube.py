@@ -161,6 +161,9 @@ class Cube:
             case "b2": self.b2()
             case _: raise ValueError(f"Unknown move: {name}")
 
+    def is_solved(self):
+        return self.corners == [(i, 0) for i in range(8)] and self.edges == [(i, 0) for i in range(12)]
+
 
 
     

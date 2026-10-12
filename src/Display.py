@@ -1,4 +1,4 @@
-"""Tkinter cube display, drag controls, and turn animations."""
+# vibecoded
 
 import math
 import time
