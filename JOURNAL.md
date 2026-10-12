@@ -3,4 +3,5 @@
 
 - 10:00-11:00 discussion & planning
   - Abdullah: solving algorithm software done
-- 11:00-11:30 OnShape CAD
+- 11:00-11:30
+  - Victoria: OnShape CAD
