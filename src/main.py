@@ -95,17 +95,62 @@ def visible_stickers(cube, yaw, pitch):
             for depth, index, vertices in _visible_geometry(yaw, pitch)]
 
 
+def _pick_sticker(canvas, sticker_indices, x, y):
+    """Find the topmost visible sticker actually underneath the pointer."""
+    for item in reversed(canvas.find_overlapping(x, y, x, y)):
+        if item in sticker_indices and canvas.itemcget(item, "state") != "hidden":
+            return sticker_indices[item]
+    return None
+
+
+def _drag_move(face, position, dx, dy, yaw, pitch):
+    """Interpret a screen drag as one outer-layer quarter-turn."""
+    if math.hypot(dx, dy) < 12:
+        return None
+    normal, right, down = FACES[face]
+    rx, ry, _ = rotate(right, yaw, pitch)
+    tx, ty, _ = rotate(down, yaw, pitch)
+    ry, ty = -ry, -ty  # Canvas y points down.
+    determinant = rx * ty - tx * ry
+    if abs(determinant) < 0.05:
+        return None
+
+    # Undo the face's screen projection before choosing a row or column.
+    horizontal = (dx * ty - tx * dy) / determinant
+    vertical = (rx * dy - dx * ry) / determinant
+    if abs(horizontal) >= 1.2 * abs(vertical):
+        axis, direction, distance = down, right, horizontal
+    elif abs(vertical) >= 1.2 * abs(horizontal):
+        axis, direction, distance = right, down, vertical
+    else:
+        return None
+    layer = sum(p * a for p, a in zip(position, axis))
+    if layer == 0:
+        return None  # Middle slices and centers do not generate face moves.
+    outward = tuple(layer * a for a in axis)
+    move = next(name for name, axes in FACES.items() if axes[0] == outward)
+    # A clockwise turn around outward moves this face along normal x outward.
+    nx, ny, nz = normal
+    ox, oy, oz = outward
+    tangent = (ny * oz - nz * oy, nz * ox - nx * oz, nx * oy - ny * ox)
+    clockwise = sum(t * d for t, d in zip(tangent, direction))
+    return move if clockwise * distance > 0 else move + "'"
+
+
 def show_cube(cube):
     root = tk.Tk()
-    root.title("Cube — drag to rotate")
+    root.title("Cube — left-drag to move, right-drag to rotate")
     root.geometry("540x540")
     root.minsize(240, 240)
     canvas = tk.Canvas(root, background="#202124", highlightthickness=0)
     canvas.pack(fill=tk.BOTH, expand=True)
     yaw, pitch = -0.55, 0.45
+    gesture = None
+    move_start = None
     previous = None
     pending_draw = None
     items = []
+    sticker_indices = {}
     piece_state = None
     visible = set()
     draw_order = ()
@@ -138,6 +183,7 @@ def show_cube(cube):
             for index, points in projected:
                 items[index] = canvas.create_polygon(
                     *points, fill=colors[geometry[index][:2]], outline="", state="normal")
+            sticker_indices.update((item, index) for index, item in enumerate(items))
         else:
             if colors is not None:
                 for item, (face, position, _) in zip(items, geometry):
@@ -160,32 +206,65 @@ def show_cube(cube):
             pending_draw = root.after_idle(draw)
 
     def resize(event):
-        nonlocal size
+        nonlocal size, gesture, move_start
         new_size = (event.width, event.height)
         if new_size != size:
             size = new_size
+            if gesture == "move":
+                gesture, move_start = None, None
             if not items and pending_draw is None:
                 # Populate the first valid canvas before Tk paints its background.
                 draw()
             else:
                 request_draw()
 
-    def press(event):
-        nonlocal previous
+    def move_press(event):
+        nonlocal gesture, move_start
+        if gesture is not None:
+            return
+        # Finish any queued view update so hit-testing uses the current geometry.
+        if pending_draw is not None:
+            root.after_cancel(pending_draw)
+            draw()
+        index = _pick_sticker(canvas, sticker_indices, event.x, event.y)
+        gesture = "move"
+        move_start = (event.x, event.y, index, yaw, pitch)
+
+    def move_release(event):
+        nonlocal gesture, move_start
+        if gesture != "move":
+            return
+        x, y, index, start_yaw, start_pitch = move_start
+        gesture, move_start = None, None
+        if index is None:
+            return
+        face, position, _ = _sticker_geometry()[index]
+        move = _drag_move(face, position, event.x - x, event.y - y, start_yaw, start_pitch)
+        if move is not None:
+            cube.move(move)
+            print(f'cube.move("{move}")', flush=True)
+            request_draw()
+
+    def view_press(event):
+        nonlocal gesture, previous
+        if gesture is not None:
+            return
+        gesture = "view"
         previous = (event.x, event.y)
 
-    def drag(event):
+    def view_drag(event):
         nonlocal yaw, pitch, previous
-        if previous is None:
+        if gesture != "view":
             return
         yaw += (event.x - previous[0]) * 0.01
         pitch += (event.y - previous[1]) * 0.01
         previous = (event.x, event.y)
         request_draw()
 
-    def release(event):
-        nonlocal previous
-        previous = None
+    def view_release(event):
+        nonlocal gesture, previous
+        if gesture == "view":
+            gesture, previous = None, None
 
     def close():
         if pending_draw is not None:
@@ -194,13 +273,14 @@ def show_cube(cube):
 
     root.protocol("WM_DELETE_WINDOW", close)
     canvas.bind("<Configure>", resize)
-    canvas.bind("<ButtonPress-1>", press)
-    canvas.bind("<B1-Motion>", drag)
-    canvas.bind("<ButtonRelease-1>", release)
+    canvas.bind("<ButtonPress-1>", move_press)
+    canvas.bind("<ButtonRelease-1>", move_release)
+    canvas.bind("<ButtonPress-3>", view_press)
+    canvas.bind("<B3-Motion>", view_drag)
+    canvas.bind("<ButtonRelease-3>", view_release)
     root.mainloop()
 
 
 if __name__ == "__main__":
     cube = Cube()
-    cube.f()
     show_cube(cube)
