@@ -16,6 +16,5 @@ if __name__ == "__main__":
     cube.r()
     cube.f()
     cube.uprime()
-    solver = Solver(cube)
-    print(solver)
+    show_cube(cube)
     

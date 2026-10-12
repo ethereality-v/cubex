@@ -3,6 +3,12 @@
 import math
 import time
 import tkinter as tk
+from collections import deque
+from copy import deepcopy
+from queue import Empty, Queue
+from threading import Event, Thread
+
+from solver import Solver
 
 
 COLORS = {
@@ -184,11 +190,24 @@ def _turn_geometry(yaw, pitch, face, angle):
     return sorted(polygons, key=lambda polygon: polygon[0])
 
 
+class _DisplaySolver(Solver):
+    """Use solve's return value without the base constructor's extra search."""
+
+    def __init__(self, cancelled):
+        self.cancelled = cancelled
+
+    def dfs(self, cube, depth, prev):
+        if self.cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+        return super().dfs(cube, depth, prev)
+
+
 class Display:
     """Display a Cube; left-drag turns a layer and right-drag orbits the view."""
 
     SNAP_SECONDS = 0.180
     FRAME_MS = 16
+    SOLVE_DEPTH = 5
 
     def __init__(self, cube):
         self.cube = cube
@@ -214,11 +233,30 @@ class Display:
         self._draw_order = ()
         self._size = (0, 0)
         self._closed = False
+        self._solving = False
+        self._solve_state = None
+        self._solver_after = None
+        self._solve_cancel = Event()
+        self._solve_results = Queue()
+        self._solution_moves = deque()
+        self._solution_count = 0
+        self._solution_done = 0
 
         self.root = tk.Tk()
         self.root.title("Cube — left-drag to turn, right-drag to rotate")
         self.root.geometry("540x540")
         self.root.minsize(240, 240)
+        controls = tk.Frame(self.root, background="#202124")
+        controls.pack(side=tk.BOTTOM, fill=tk.X)
+        controls.columnconfigure(1, weight=1)
+        self.solve_button = tk.Button(controls, text="Solve", command=self._solve)
+        self.solve_button.grid(row=0, column=0, padx=12, pady=10)
+        self._status = tk.StringVar(self.root, value="")
+        status_label = tk.Label(
+            controls, textvariable=self._status, background="#202124",
+            foreground="#e8eaed", anchor="w", justify=tk.LEFT, width=1)
+        status_label.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=10)
+        status_label.bind("<Configure>", lambda event: status_label.configure(wraplength=event.width))
         self.canvas = tk.Canvas(self.root, background="#202124", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -240,12 +278,18 @@ class Display:
         if self._closed:
             return
         self._closed = True
-        for callback in (self._pending_draw, self._animation_after):
+        self._solve_cancel.set()
+        for callback in (self._pending_draw, self._animation_after, self._solver_after):
             if callback is not None:
                 self.root.after_cancel(callback)
         self._pending_draw = self._animation_after = None
+        self._solver_after = None
+        self._solution_moves.clear()
         self._snap = None
+        # Release Tcl objects on the UI thread, even if a worker is winding down.
+        self._status = None
         self.root.destroy()
+        self.root = self.canvas = self.solve_button = None
 
     def _draw(self):
         self._pending_draw = None
@@ -318,12 +362,13 @@ class Display:
             self._request_draw()
 
     def _move_press(self, event):
-        if self._gesture is not None or self._snap is not None:
+        if self._solving or self._gesture is not None or self._snap is not None:
             return
         self._draw_now()
         index = _pick_sticker(self.canvas, self._sticker_indices, event.x, event.y)
         self._gesture = "move"
         self._move_start = (event.x, event.y, index)
+        self._update_solve_button()
 
     def _move_drag(self, event):
         if self._gesture != "move":
@@ -356,6 +401,7 @@ class Display:
         self._move_drag(event)
         self._gesture = self._move_start = None
         if self._turn_face is None:
+            self._update_solve_button()
             return
         target = 0.0
         if abs(self._turn_angle) >= math.pi / 4 - 1e-12:
@@ -368,6 +414,7 @@ class Display:
                 self._request_draw()
                 raise
             print(f'cube.move("{move}")', flush=True)
+            self._status.set("")
         remaining = abs(target - self._turn_angle)
         if remaining < 1e-12:
             self._clear_turn()
@@ -375,6 +422,7 @@ class Display:
             return
         duration = max(0.060, self.SNAP_SECONDS * remaining / (math.pi / 2))
         self._snap = (time.perf_counter(), self._turn_angle, target, duration)
+        self._update_solve_button()
         self._animate()
 
     def _animate(self):
@@ -391,6 +439,8 @@ class Display:
         self._draw_now()
         if self._snap is not None:
             self._animation_after = self.root.after(self.FRAME_MS, self._animate)
+        elif self._solving:
+            self._play_next_move()
 
     def _clear_turn(self):
         self._snap = None
@@ -398,12 +448,14 @@ class Display:
         self._turn_angle = 0.0
         self._turn_colors = None
         self._drag_component = self._drag_factor = None
+        self._update_solve_button()
 
     def _view_press(self, event):
-        if self._gesture is not None or self._snap is not None:
+        if self._solving or self._gesture is not None or self._snap is not None:
             return
         self._gesture = "view"
         self._previous = (event.x, event.y)
+        self._update_solve_button()
 
     def _view_drag(self, event):
         if self._gesture != "view":
@@ -416,6 +468,94 @@ class Display:
     def _view_release(self, event):
         if self._gesture == "view":
             self._gesture = self._previous = None
+            self._update_solve_button()
+
+    def _update_solve_button(self):
+        if not self._closed:
+            busy = self._solving or self._gesture is not None or self._snap is not None
+            self.solve_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+
+    def _solve(self):
+        if self._closed or self._solving or self._gesture is not None or self._snap is not None:
+            return
+        snapshot = deepcopy(self.cube)
+        self._solve_state = (tuple(self.cube.corners), tuple(self.cube.edges))
+        self._solving = True
+        self._solve_cancel.clear()
+        self._status.set("Solving…")
+        self._update_solve_button()
+        # The worker only touches its copy and the queue; all Tk work stays here.
+        Thread(target=self._run_solver,
+               args=(snapshot, self._solve_cancel, self._solve_results, self.SOLVE_DEPTH),
+               daemon=True).start()
+        self._solver_after = self.root.after(30, self._poll_solver)
+
+    @staticmethod
+    def _run_solver(snapshot, cancelled, results, max_depth):
+        try:
+            result = _DisplaySolver(cancelled).solve(snapshot, max_depth)
+        except InterruptedError:
+            return
+        except Exception as error:
+            results.put(("error", str(error)))
+        else:
+            results.put(("result", result))
+
+    def _poll_solver(self):
+        self._solver_after = None
+        if self._closed:
+            return
+        try:
+            kind, result = self._solve_results.get_nowait()
+        except Empty:
+            self._solver_after = self.root.after(30, self._poll_solver)
+            return
+        if kind == "error":
+            self._finish_solving(f"Solver error: {result}")
+        elif (tuple(self.cube.corners), tuple(self.cube.edges)) != self._solve_state:
+            self._finish_solving("Cube changed. Click Solve again.")
+        elif result is None:
+            self._finish_solving(f"No solution found within {self.SOLVE_DEPTH} moves.")
+        elif not result:
+            self._finish_solving("Cube is already solved.")
+        else:
+            self._solution_moves = deque(result)
+            self._solution_count = len(result)
+            self._solution_done = 0
+            self._play_next_move()
+
+    def _play_next_move(self):
+        if self._closed:
+            return
+        if not self._solution_moves:
+            self._finish_solving("Solved." if self.cube.is_solved() else "Solution playback complete.")
+            return
+        move = self._solution_moves.popleft()
+        self._turn_face = move[0].upper()
+        self._turn_angle = 0.0
+        self._turn_colors = sticker_colors(self.cube)
+        target = math.pi / 2 if move.endswith("'") else -math.pi / 2
+        if move.endswith("2"):
+            target = -math.pi
+        try:
+            self.cube.move(move)
+        except Exception as error:
+            self._clear_turn()
+            self._request_draw()
+            self._finish_solving(f"Could not play solution: {error}")
+            return
+        print(f'cube.move("{move}")', flush=True)
+        self._solution_done += 1
+        self._status.set(f"Playing solution: {self._solution_done}/{self._solution_count}")
+        duration = self.SNAP_SECONDS * abs(target) / (math.pi / 2)
+        self._snap = (time.perf_counter(), 0.0, target, duration)
+        self._animate()
+
+    def _finish_solving(self, message):
+        self._solving = False
+        self._solution_moves.clear()
+        self._status.set(message)
+        self._update_solve_button()
 
 
 
