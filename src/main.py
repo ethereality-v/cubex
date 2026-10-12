@@ -15,6 +15,8 @@ if __name__ == "__main__":
     cube.u()
     cube.r()
     cube.f()
+    cube.d()
+    cube.lprime()
     cube.uprime()
     show_cube(cube)
     

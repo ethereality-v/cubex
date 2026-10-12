@@ -8,8 +8,10 @@ class Solver:
     "F", "F'", "F2",
     "B", "B'", "B2")
 
+    MAX_DEPTH = 10
+
     def __init__(self, cube):
-        print(self.solve(cube, 5))
+        print(self.solve(cube))
 
     def undo(self, move):
         if move[-1] == "2":
@@ -41,7 +43,7 @@ class Solver:
 
         return None
 
-    def solve(self, cube, max_depth=5):
+    def solve(self, cube, max_depth=10):
         for depth in range(max_depth + 1):
             result = self.dfs(cube, depth, None)
 

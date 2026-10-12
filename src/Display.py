@@ -207,7 +207,7 @@ class Display:
 
     SNAP_SECONDS = 0.180
     FRAME_MS = 16
-    SOLVE_DEPTH = 5
+    SOLVE_DEPTH = Solver.MAX_DEPTH
 
     def __init__(self, cube):
         self.cube = cube
