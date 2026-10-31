@@ -303,6 +303,64 @@ class Solver:
                 return [move] + result
         return None
 
+    def phase2_search(self, cube, max_depth=18):
+
+        cancelled = getattr(self, "cancelled", None)
+        if cancelled is not None and cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+        if self.corner_index(cube) or self.edge_index(cube) or self.slice_index(cube):
+            raise ValueError("Cube must be in the phase-two subgroup")
+
+        corner = self.corner_permutation_index(cube)
+        edge = self.ud_edge_permutation_index(cube)
+        slice_index = self.slice_permutation_index(cube)
+        if corner == 0 and edge == 0 and slice_index == 0:
+            return []
+        if max_depth < 1:
+            return None
+
+        move_tables = self.phase2_move_tables()
+        pruning_tables = self.phase2_pruning_tables()
+        minimum = max(pruning_tables[0][corner * 24 + slice_index],
+                      pruning_tables[1][edge * 24 + slice_index])
+        for limit in range(minimum, min(max_depth, 18) + 1):
+            result = self.phase2_dfs(corner, edge, slice_index, 0, limit, None,
+                                     move_tables, pruning_tables)
+            if result is not None:
+                return result
+        return None
+
+    def phase2_dfs(self, corner, edge, slice_index, depth, limit, previous,
+                   move_tables, pruning_tables):
+
+        cancelled = getattr(self, "cancelled", None)
+        if cancelled is not None and cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+
+        distance = max(pruning_tables[0][corner * 24 + slice_index],
+                       pruning_tables[1][edge * 24 + slice_index])
+        if depth + distance > limit:
+            return None
+        if corner == 0 and edge == 0 and slice_index == 0:
+            return []
+        if depth == limit:
+            return None
+
+        move_count = len(self.PHASE2_MOVES)
+        for move_index, move in enumerate(self.PHASE2_MOVES):
+            face = move[0]
+            if face == previous or (previous, face) in (("D", "U"), ("L", "R"), ("B", "F")):
+                continue
+
+            next_corner = move_tables[0][corner * move_count + move_index]
+            next_edge = move_tables[1][edge * move_count + move_index]
+            next_slice = move_tables[2][slice_index * move_count + move_index]
+            result = self.phase2_dfs(next_corner, next_edge, next_slice, depth + 1,
+                                     limit, face, move_tables, pruning_tables)
+            if result is not None:
+                return [move] + result
+        return None
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
@@ -318,10 +376,10 @@ class Solver:
                 continue 
 
             cube.move(move)
-
-            result = self.dfs(cube, depth + 1, limit, move[0])
-
-            cube.move(self.undo(move))
+            try:
+                result = self.dfs(cube, depth + 1, limit, move[0])
+            finally:
+                cube.move(self.undo(move))
 
             if result is not None:
                 return [move] + result
