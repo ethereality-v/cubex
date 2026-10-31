@@ -30,6 +30,14 @@ class Solver:
             index = 3 * index + cube.corners[i][1]
         return index
 
+    def corner_orientations(self, index):
+
+        orientations = [0] * 8
+        for i in range(6, -1, -1):
+            index, orientations[i] = divmod(index, 3)
+        orientations[7] = -sum(orientations[:7]) % 3
+        return orientations
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
