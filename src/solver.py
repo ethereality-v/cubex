@@ -1,4 +1,4 @@
-from math import comb
+from math import comb, factorial
 
 
 class Solver:
@@ -80,6 +80,24 @@ class Solver:
                 if count == 0:
                     break
         return list(reversed(positions))
+
+    def permutation_index(self, pieces):
+
+        remaining = list(range(len(pieces)))
+        index = 0
+        for piece in pieces:
+            index = index * len(remaining) + remaining.index(piece)
+            remaining.remove(piece)
+        return index
+
+    def permutation_from_index(self, index, size):
+
+        remaining = list(range(size))
+        pieces = []
+        for i in range(size - 1, -1, -1):
+            position, index = divmod(index, factorial(i))
+            pieces.append(remaining.pop(position))
+        return pieces
 
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
