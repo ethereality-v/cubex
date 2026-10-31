@@ -14,8 +14,11 @@ class Solver:
     "F", "F'", "F2",
     "B", "B'", "B2")
 
+    PHASE2_MOVES = ("U", "U'", "U2", "D", "D'", "D2", "R2", "L2", "F2", "B2")
+
     MAX_DEPTH = 10
     _phase1_tables = None
+    _phase2_tables = None
 
     def __init__(self, cube):
         self.cube = cube
@@ -157,6 +160,45 @@ class Solver:
 
         Solver._phase1_tables = tuple(tables)
         return Solver._phase1_tables
+
+    def phase2_coordinate_cube(self, coordinate, index):
+
+        cube = Cube()
+        if coordinate == "corner":
+            cube.corners = [(piece, 0) for piece in self.permutation_from_index(index, 8)]
+        elif coordinate == "edge":
+            cube.edges[:8] = [(piece, 0) for piece in self.permutation_from_index(index, 8)]
+        elif coordinate == "slice":
+            cube.edges[8:] = [(piece + 8, 0) for piece in self.permutation_from_index(index, 4)]
+        else:
+            raise ValueError(f"Unknown phase-two coordinate: {coordinate}")
+        return cube
+
+    def phase2_move_tables(self):
+
+        if Solver._phase2_tables is not None:
+            return Solver._phase2_tables
+
+        cancelled = getattr(self, "cancelled", None)
+        tables = []
+        for coordinate, size, index_cube in (
+            ("corner", 40320, self.corner_permutation_index),
+            ("edge", 40320, self.ud_edge_permutation_index),
+            ("slice", 24, self.slice_permutation_index),
+        ):
+            table = array("H")
+            for index in range(size):
+                if cancelled is not None and cancelled.is_set():
+                    raise InterruptedError("Solve cancelled")
+                cube = self.phase2_coordinate_cube(coordinate, index)
+                for move in self.PHASE2_MOVES:
+                    cube.move(move)
+                    table.append(index_cube(cube))
+                    cube.move(self.undo(move))
+            tables.append(table)
+
+        Solver._phase2_tables = tuple(tables)
+        return Solver._phase2_tables
 
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
