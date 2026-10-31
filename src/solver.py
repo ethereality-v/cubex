@@ -99,6 +99,18 @@ class Solver:
             pieces.append(remaining.pop(position))
         return pieces
 
+    def corner_permutation_index(self, cube):
+
+        return self.permutation_index([piece for piece, _ in cube.corners])
+
+    def ud_edge_permutation_index(self, cube):
+
+        return self.permutation_index([piece for piece, _ in cube.edges[:8]])
+
+    def slice_permutation_index(self, cube):
+
+        return self.permutation_index([piece - 8 for piece, _ in cube.edges[8:]])
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
