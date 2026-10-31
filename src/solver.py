@@ -38,6 +38,14 @@ class Solver:
         orientations[7] = -sum(orientations[:7]) % 3
         return orientations
 
+    def edge_index(self, cube):
+
+        index = 0
+        # The twelfth orientation is determined by the first eleven.
+        for i in range(11):
+            index = 2 * index + cube.edges[i][1]
+        return index
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
