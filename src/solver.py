@@ -22,6 +22,14 @@ class Solver:
         else:
             return move + "'"
 
+    def corner_index(self, cube):
+
+        index = 0
+        # The eighth orientation is determined by the first seven.
+        for i in range(7):
+            index = 3 * index + cube.corners[i][1]
+        return index
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
