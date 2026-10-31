@@ -1,4 +1,7 @@
+from array import array
 from math import comb, factorial
+
+from cube import Cube
 
 
 class Solver:
@@ -12,6 +15,7 @@ class Solver:
     "B", "B'", "B2")
 
     MAX_DEPTH = 10
+    _phase1_tables = None
 
     def __init__(self, cube):
         self.cube = cube
@@ -110,6 +114,49 @@ class Solver:
     def slice_permutation_index(self, cube):
 
         return self.permutation_index([piece - 8 for piece, _ in cube.edges[8:]])
+
+    def phase1_coordinate_cube(self, coordinate, index):
+
+        cube = Cube()
+        if coordinate == "corner":
+            cube.corners = list(enumerate(self.corner_orientations(index)))
+        elif coordinate == "edge":
+            cube.edges = list(enumerate(self.edge_orientations(index)))
+        elif coordinate == "slice":
+            positions = set(self.slice_positions(index))
+            other_edges = iter(range(8))
+            slice_edges = iter(range(8, 12))
+            cube.edges = [(next(slice_edges) if i in positions else next(other_edges), 0)
+                          for i in range(12)]
+        else:
+            raise ValueError(f"Unknown phase-one coordinate: {coordinate}")
+        return cube
+
+    def phase1_move_tables(self):
+
+        if Solver._phase1_tables is not None:
+            return Solver._phase1_tables
+
+        cancelled = getattr(self, "cancelled", None)
+        tables = []
+        for coordinate, size, index_cube in (
+            ("corner", 2187, self.corner_index),
+            ("edge", 2048, self.edge_index),
+            ("slice", 495, self.slice_index),
+        ):
+            table = array("H")
+            for index in range(size):
+                if cancelled is not None and cancelled.is_set():
+                    raise InterruptedError("Solve cancelled")
+                cube = self.phase1_coordinate_cube(coordinate, index)
+                for move in self.MOVES:
+                    cube.move(move)
+                    table.append(index_cube(cube))
+                    cube.move(self.undo(move))
+            tables.append(table)
+
+        Solver._phase1_tables = tuple(tables)
+        return Solver._phase1_tables
 
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
