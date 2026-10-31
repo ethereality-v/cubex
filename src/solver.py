@@ -247,6 +247,62 @@ class Solver:
             Solver._phase2_pruning = (corner_slice, edge_slice)
         return Solver._phase2_pruning
 
+    def phase1_search(self, cube, max_depth=12):
+
+        cancelled = getattr(self, "cancelled", None)
+        if cancelled is not None and cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+
+        corner = self.corner_index(cube)
+        edge = self.edge_index(cube)
+        slice_index = self.slice_index(cube)
+        if corner == 0 and edge == 0 and slice_index == 0:
+            return []
+        if max_depth < 1:
+            return None
+
+        move_tables = self.phase1_move_tables()
+        pruning_tables = self.phase1_pruning_tables()
+        minimum = max(pruning_tables[0][corner * 495 + slice_index],
+                      pruning_tables[1][edge * 495 + slice_index])
+        for limit in range(minimum, min(max_depth, 12) + 1):
+            result = self.phase1_dfs(corner, edge, slice_index, 0, limit, None,
+                                     move_tables, pruning_tables)
+            if result is not None:
+                return result
+        return None
+
+    def phase1_dfs(self, corner, edge, slice_index, depth, limit, previous,
+                   move_tables, pruning_tables):
+
+        cancelled = getattr(self, "cancelled", None)
+        if cancelled is not None and cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+
+        distance = max(pruning_tables[0][corner * 495 + slice_index],
+                       pruning_tables[1][edge * 495 + slice_index])
+        if depth + distance > limit:
+            return None
+        if corner == 0 and edge == 0 and slice_index == 0:
+            return []
+        if depth == limit:
+            return None
+
+        move_count = len(self.MOVES)
+        for move_index, move in enumerate(self.MOVES):
+            face = move[0]
+            if face == previous or (previous, face) in (("D", "U"), ("L", "R"), ("B", "F")):
+                continue
+
+            next_corner = move_tables[0][corner * move_count + move_index]
+            next_edge = move_tables[1][edge * move_count + move_index]
+            next_slice = move_tables[2][slice_index * move_count + move_index]
+            result = self.phase1_dfs(next_corner, next_edge, next_slice, depth + 1,
+                                     limit, face, move_tables, pruning_tables)
+            if result is not None:
+                return [move] + result
+        return None
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
