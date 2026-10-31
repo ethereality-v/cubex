@@ -1,3 +1,6 @@
+from math import comb
+
+
 class Solver:
 
     MOVES = (
@@ -53,6 +56,30 @@ class Solver:
             index, orientations[i] = divmod(index, 2)
         orientations[11] = sum(orientations[:11]) % 2
         return orientations
+
+    def slice_index(self, cube):
+
+        index = 494
+        count = 0
+        for position, (piece, _) in enumerate(cube.edges):
+            if piece >= 8:
+                count += 1
+                index -= comb(position, count)
+        return index
+
+    def slice_positions(self, index):
+
+        index = 494 - index
+        positions = []
+        count = 4
+        for position in range(11, -1, -1):
+            if comb(position, count) <= index:
+                positions.append(position)
+                index -= comb(position, count)
+                count -= 1
+                if count == 0:
+                    break
+        return list(reversed(positions))
 
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
