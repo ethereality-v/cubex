@@ -19,6 +19,8 @@ class Solver:
     MAX_DEPTH = 10
     _phase1_tables = None
     _phase2_tables = None
+    _phase1_pruning = None
+    _phase2_pruning = None
 
     def __init__(self, cube):
         self.cube = cube
@@ -199,6 +201,51 @@ class Solver:
 
         Solver._phase2_tables = tuple(tables)
         return Solver._phase2_tables
+
+    def pruning_table(self, first_moves, second_moves, move_count):
+
+        first_size = len(first_moves) // move_count
+        second_size = len(second_moves) // move_count
+        distances = bytearray([255]) * (first_size * second_size)
+        distances[0] = 0
+        queue = array("I", [0])
+        head = 0
+        cancelled = getattr(self, "cancelled", None)
+
+        while head < len(queue):
+            if head % 1024 == 0 and cancelled is not None and cancelled.is_set():
+                raise InterruptedError("Solve cancelled")
+            current = queue[head]
+            head += 1
+            first, second = divmod(current, second_size)
+            distance = distances[current] + 1
+            for move in range(move_count):
+                next_first = first_moves[first * move_count + move]
+                next_second = second_moves[second * move_count + move]
+                next_index = next_first * second_size + next_second
+                if distances[next_index] == 255:
+                    distances[next_index] = distance
+                    queue.append(next_index)
+
+        return distances
+
+    def phase1_pruning_tables(self):
+
+        if Solver._phase1_pruning is None:
+            corner, edge, slice_moves = self.phase1_move_tables()
+            corner_slice = self.pruning_table(corner, slice_moves, len(self.MOVES))
+            edge_slice = self.pruning_table(edge, slice_moves, len(self.MOVES))
+            Solver._phase1_pruning = (corner_slice, edge_slice)
+        return Solver._phase1_pruning
+
+    def phase2_pruning_tables(self):
+
+        if Solver._phase2_pruning is None:
+            corner, edge, slice_moves = self.phase2_move_tables()
+            corner_slice = self.pruning_table(corner, slice_moves, len(self.PHASE2_MOVES))
+            edge_slice = self.pruning_table(edge, slice_moves, len(self.PHASE2_MOVES))
+            Solver._phase2_pruning = (corner_slice, edge_slice)
+        return Solver._phase2_pruning
 
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
