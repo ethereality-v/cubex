@@ -16,7 +16,7 @@ class Solver:
 
     PHASE2_MOVES = ("U", "U'", "U2", "D", "D'", "D2", "R2", "L2", "F2", "B2")
 
-    MAX_DEPTH = 10
+    MAX_DEPTH = 30
     _phase1_tables = None
     _phase2_tables = None
     _phase1_pruning = None
@@ -361,29 +361,80 @@ class Solver:
                 return [move] + result
         return None
 
+    def validate_cube(self, cube):
+
+        try:
+            corners, twists = zip(*cube.corners)
+            edges, flips = zip(*cube.edges)
+            values = corners + twists + edges + flips
+            valid = (all(type(value) is int for value in values)
+                     and sorted(corners) == list(range(8))
+                     and sorted(edges) == list(range(12))
+                     and all(0 <= twist < 3 for twist in twists)
+                     and all(0 <= flip < 2 for flip in flips)
+                     and sum(twists) % 3 == 0
+                     and sum(flips) % 2 == 0)
+            if valid:
+                corner_parity = sum(corners[i] > corners[j] for i in range(8)
+                                    for j in range(i + 1, 8)) % 2
+                edge_parity = sum(edges[i] > edges[j] for i in range(12)
+                                  for j in range(i + 1, 12)) % 2
+                valid = corner_parity == edge_parity
+        except (AttributeError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise ValueError("Invalid cube state")
+
     def dfs(self, cube, depth, limit, prev):
-        if depth + self.heuristic(cube) > limit:
+
+        if not getattr(self, "_two_phase_active", False):
+            return self.solve(cube, limit - depth)
+        corner = self.corner_index(cube)
+        edge = self.edge_index(cube)
+        slice_index = self.slice_index(cube)
+        return self.two_phase_dfs(cube, corner, edge, slice_index, depth, limit, prev, [])
+
+    def two_phase_dfs(self, cube, corner, edge, slice_index, depth, limit, previous, path):
+
+        cancelled = getattr(self, "cancelled", None)
+        if cancelled is not None and cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+        pruning = Solver._phase1_pruning
+        distance = max(pruning[0][corner * 495 + slice_index],
+                       pruning[1][edge * 495 + slice_index])
+        if depth + distance > limit:
             return None
-        
-        if cube.is_solved():
-            return []
 
-        for move in self.MOVES:
-            if move[0] == prev:
-                continue # avoides repeating moves
-
-            if (prev, move[0]) in (("D", "U"), ("L", "R"), ("B", "F")):
-                continue 
-
-            cube.move(move)
-            try:
-                result = self.dfs(cube, depth + 1, limit, move[0])
-            finally:
-                cube.move(self.undo(move))
-
+        if depth == limit:
+            if corner or edge or slice_index:
+                return None
+            candidate = Cube()
+            candidate.corners = cube.corners.copy()
+            candidate.edges = cube.edges.copy()
+            for move in path:
+                candidate.move(move)
+            result = self.phase2_search(candidate, self._solve_max_depth - len(path))
             if result is not None:
-                return [move] + result
+                return path + result
+            return None
 
+        tables = Solver._phase1_tables
+        move_count = len(self.MOVES)
+        for move_index, move in enumerate(self.MOVES):
+            face = move[0]
+            if face == previous or (previous, face) in (("D", "U"), ("L", "R"), ("B", "F")):
+                continue
+            next_corner = tables[0][corner * move_count + move_index]
+            next_edge = tables[1][edge * move_count + move_index]
+            next_slice = tables[2][slice_index * move_count + move_index]
+            path.append(move)
+            try:
+                result = self.two_phase_dfs(cube, next_corner, next_edge, next_slice,
+                                            depth + 1, limit, face, path)
+            finally:
+                path.pop()
+            if result is not None:
+                return result
         return None
 
     def heuristic(self, cube):
@@ -402,13 +453,40 @@ class Solver:
         )
 
 
-    def solve(self, cube, max_depth=10):
-        for limit in range(self.heuristic(cube), max_depth + 1):
-            result = self.dfs(cube, 0, limit, None)
+    def solve(self, cube, max_depth=MAX_DEPTH):
+        cancelled = getattr(self, "cancelled", None)
+        if cancelled is not None and cancelled.is_set():
+            raise InterruptedError("Solve cancelled")
+        self.validate_cube(cube)
+        if cube.is_solved():
+            return []
+        if max_depth < 1:
+            return None
 
+        self._solve_max_depth = max_depth
+        corner = self.corner_index(cube)
+        edge = self.edge_index(cube)
+        slice_index = self.slice_index(cube)
+        in_phase2 = corner == 0 and edge == 0 and slice_index == 0
+        if in_phase2:
+            result = self.phase2_search(cube, max_depth)
             if result is not None:
                 return result
 
+        self.phase1_move_tables()
+        pruning = self.phase1_pruning_tables()
+        minimum = max(pruning[0][corner * 495 + slice_index],
+                      pruning[1][edge * 495 + slice_index])
+        if in_phase2:
+            minimum = max(minimum, 1)
+        self._two_phase_active = True
+        try:
+            for limit in range(minimum, min(max_depth, 12) + 1):
+                result = self.dfs(cube, 0, limit, None)
+                if result is not None:
+                    return result
+        finally:
+            self._two_phase_active = False
         return None
     
 
