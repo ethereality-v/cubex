@@ -46,6 +46,14 @@ class Solver:
             index = 2 * index + cube.edges[i][1]
         return index
 
+    def edge_orientations(self, index):
+
+        orientations = [0] * 12
+        for i in range(10, -1, -1):
+            index, orientations[i] = divmod(index, 2)
+        orientations[11] = sum(orientations[:11]) % 2
+        return orientations
+
     def dfs(self, cube, depth, limit, prev):
         if depth + self.heuristic(cube) > limit:
             return None
